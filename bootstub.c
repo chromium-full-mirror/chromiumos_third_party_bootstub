@@ -44,10 +44,59 @@ struct hacked_params *find_params_struct(UINTN bootstub_location)
     return (struct hacked_params *)(bootstub_location - 0x1000);
 }
 
+// Copy a string to the right within a buffer.
+static void shove_over(char *src, char *dst)
+{
+    int i = 0;
+    for (i=0; src[i]; i++)
+        ;                               // find strlen(src)
+    dst += i;
+    src += i;
+    i++;                                // also terminating '\0';
+    while (i--)
+        *dst-- = *src--;
+}
+
+// sprintf(dst,"%02x",val)
+static void one_byte(char *dst, uint8_t val)
+{
+    dst[0] = "0123456789abcdef"[(val >> 4) & 0x0F];
+    dst[1] = "0123456789abcdef"[val & 0x0F];
+}
+
+// Display a GUID in canonical form
+static void emit_guid(char *dst, uint8_t *guid)
+{
+    one_byte(dst, guid[3]); dst += 2;
+    one_byte(dst, guid[2]); dst += 2;
+    one_byte(dst, guid[1]); dst += 2;
+    one_byte(dst, guid[0]); dst += 2;
+    *dst++ = '-';
+    one_byte(dst, guid[5]); dst += 2;
+    one_byte(dst, guid[4]); dst += 2;
+    *dst++ = '-';
+    one_byte(dst, guid[7]); dst += 2;
+    one_byte(dst, guid[6]); dst += 2;
+    *dst++ = '-';
+    one_byte(dst, guid[8]); dst += 2;
+    one_byte(dst, guid[9]); dst += 2;
+    *dst++ = '-';
+    one_byte(dst, guid[10]); dst += 2;
+    one_byte(dst, guid[11]); dst += 2;
+    one_byte(dst, guid[12]); dst += 2;
+    one_byte(dst, guid[13]); dst += 2;
+    one_byte(dst, guid[14]); dst += 2;
+    one_byte(dst, guid[15]); dst += 2;
+}
+
+
 // Replace any %D with the device letter, and replace any %P with the partition
-// number. For example, ("root=/dev/sd%D%P",2,3) gives "root=/dev/sdc3". The
-// input string must be mutable and end with a trailing '\0'.
-void update_cmdline_inplace(char *src, int devnum, int partnum)
+// number. For example, ("root=/dev/sd%D%P",2,3) gives "root=/dev/sdc3".
+// Replace any %U with the human-readable form of the GUID (if provided). The
+// input string must be mutable and end with a trailing '\0', and have enough
+// room for all the expansion.
+static void update_cmdline_inplace(char *src, int devnum, int partnum,
+                                   uint8_t *guid)
 {
     char *dst;
 
@@ -74,6 +123,13 @@ void update_cmdline_inplace(char *src, int devnum, int partnum)
                 *dst = 'a' + devnum;
                 src++;
                 break;
+            case 'U':
+                if (guid) {
+                    shove_over(src+2, dst+36);
+                    emit_guid(dst, guid);
+                    src = dst+35;
+                    dst += 35;
+                }
             default:
                 *dst = *src;
             }
@@ -95,7 +151,7 @@ static __inline void port80w (unsigned short int value)
 extern void trampoline(unsigned long, void *);
 
 
-// Reserve some space for the EFI memory map. 
+// Reserve some space for the EFI memory map.
 // Danger Will Robinson: this is just a guess at the size and alignment. If
 // it's too small, the EFI GetMemoryMap() call will fail.
 // FIXME: Make the size dynamic? Retry with larger size on failure?
@@ -106,6 +162,9 @@ typedef struct cros_boot_info {
     UINTN drive_number;                 // 0 - 25
     UINTN partition_number;             // 1 - 99
     UINTN original_address;             // our RAM address prior to execution
+    // The guid stuff was added later, so we need to consider it optional, at
+    // least for testing.
+    uint8_t partition_guid[16];         // kernel partition GUID
 } cros_boot_info_t;
 
 
@@ -119,6 +178,8 @@ EFI_STATUS efi_main (EFI_HANDLE image, EFI_SYSTEM_TABLE *systab)
     UINT32 desc_version = 0;
     EFI_LOADED_IMAGE *loaded_image;
     EFI_GUID loaded_image_protocol = LOADED_IMAGE_PROTOCOL;
+    EFI_GUID zero_guid = {0, 0, 0, {0, 0, 0, 0, 0, 0, 0, 0}};
+    void *guid_ptr;
 
     // I'm here.
     port80w(0xc0de);
@@ -134,6 +195,10 @@ EFI_STATUS efi_main (EFI_HANDLE image, EFI_SYSTEM_TABLE *systab)
         goto fail;
     }
     cros_boot_info_t *booting = loaded_image->LoadOptions;
+    if (loaded_image->LoadOptionsSize < 40) // DWR: min size including guid
+        guid_ptr = &zero_guid;
+    else
+        guid_ptr = booting->partition_guid;
 
     // Find the parameters that we're passing to the kernel.
     struct hacked_params *params = find_params_struct(booting->original_address);
@@ -141,7 +206,8 @@ EFI_STATUS efi_main (EFI_HANDLE image, EFI_SYSTEM_TABLE *systab)
     // Update the kernel command-line string with the correct rootfs device
     update_cmdline_inplace((char *)(unsigned long)(params->cmd_line_ptr),
                            booting->drive_number,
-                           booting->partition_number + 1);
+                           booting->partition_number + 1,
+                           guid_ptr);
 
     // Obtain the EFI memory map.
     if (uefi_call_wrapper(systab->BootServices->GetMemoryMap, 5,
