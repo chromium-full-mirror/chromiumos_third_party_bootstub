@@ -182,7 +182,7 @@ EFI_STATUS efi_main (EFI_HANDLE image, EFI_SYSTEM_TABLE *systab)
     void *guid_ptr;
 
     // I'm here.
-    port80w(0xc0de);
+    port80w(0xb0b0);
 
     // Find the parameters that the BIOS has passed to us.
     if (uefi_call_wrapper(systab->BootServices->HandleProtocol, 3,
@@ -246,7 +246,7 @@ EFI_STATUS efi_main (EFI_HANDLE image, EFI_SYSTEM_TABLE *systab)
 fail:
 
     // Bad Things happened.
-    port80w(0xdead);
+    port80w(0xeeee);
 
     return EFI_LOAD_ERROR;
 }
