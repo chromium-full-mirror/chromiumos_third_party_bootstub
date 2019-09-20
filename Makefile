@@ -41,7 +41,7 @@ OPTIMFLAGS = -O2
 DEBUGFLAGS = -Wall
 CFLAGS     = $(OPTIMFLAGS) -fpic -fshort-wchar $(DEBUGFLAGS)
 CFLAGS     += -DEFI_FUNCTION_WRAPPER
-LDFLAGS    = -nostdlib -znocombreloc
+LDFLAGS    = -nostdlib -znocombreloc -znotext
 
 
 CRTOBJS       = $(EFICRT0)/crt0-efi-$(ARCH).o
